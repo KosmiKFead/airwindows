@@ -1,0 +1,29 @@
+name: Build Ultralight2Flutter
+
+on:
+  push:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build VST Solution
+        run: |
+          msbuild plugins/WinVST/Ultralight2/VSTProject.sln /p:Configuration=Release /p:Platform=x64
+
+      - name: Upload Plugin Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ultralight2Flutter-Win64
+          path: |
+            plugins/WinVST/Ultralight2/**/*.dll
+            plugins/WinVST/Ultralight2/**/*.vst3
