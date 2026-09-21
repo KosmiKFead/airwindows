@@ -13,22 +13,31 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Diagnostic Build & Sleuth
+      - name: Hunt Headers and Compile
         shell: pwsh
         run: |
           Set-Location "plugins/WinVST/Ultralight2"
           
-          Write-Host "--- 1. CHECKING FOLDER CONTENTS ---"
-          Get-ChildItem | Select-Object Name
+          # Dynamically find where audioeffectx.h is hiding in the repo and copy all headers here
+          $sdkFile = Get-ChildItem -Path "../.." -Recurse -Filter "audioeffectx.h" | Select-Object -First 1
+          if ($sdkFile) {
+              Write-Host "Found VST SDK headers at: $($sdkFile.DirectoryName)"
+              Copy-Item "$($sdkFile.DirectoryName)/*" . -Force
+          } else {
+              throw "Could not find VST SDK headers in the repository!"
+          }
           
-          Write-Host "--- 2. LOCATING VST HEADERS IN REPO ---"
-          Get-ChildItem -Path "../.." -Recurse -Filter "audioeffectx.h" | Select-Object FullName
-          
-          Write-Host "--- 3. INITIALIZING COMPILER ---"
+          # Initialize MSVC compiler environment
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $installPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           Import-Module (Join-Path $installPath "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
           Enter-VsDevShell -VsInstallPath $installPath -arch amd64
           
-          Write-Host "--- 4. RUNNING COMPILER ---"
+          # Compile source files into plugin DLL
           cl /O2 /LD Ultralight2.cpp Ultralight2Proc.cpp /link /DEF:vstplug.def /OUT:Ultralight2Flutter.dll
+
+      - name: Upload Plugin Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ultralight2Flutter-Win64
+          path: plugins/WinVST/Ultralight2/Ultralight2Flutter.dll
