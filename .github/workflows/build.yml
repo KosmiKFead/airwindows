@@ -13,26 +13,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Add MSBuild to PATH
-        uses: microsoft/setup-msbuild@v2
+      - name: Set up MSVC Compiler
+        uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Upgrade Legacy VS Project
+      - name: Direct C++ Compile to VST DLL
         run: |
-          vcupgrade plugins/WinVST/Ultralight2/VSTProject.vcxproj
-
-      - name: Build VST (x64)
-        run: |
-          msbuild plugins/WinVST/Ultralight2/VSTProject.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0
-        continue-on-error: true
-
-      - name: Build VST (Win32 Fallback)
-        run: |
-          msbuild plugins/WinVST/Ultralight2/VSTProject.vcxproj /p:Configuration=Release /p:Platform=Win32 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0
+          cd plugins/WinVST/Ultralight2
+          cl /O2 /LD Ultralight2.cpp Ultralight2Proc.cpp /link /DEF:vstplug.def /OUT:Ultralight2Flutter.dll
 
       - name: Upload Plugin Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Ultralight2Flutter-Win
-          path: |
-            plugins/WinVST/Ultralight2/**/*.dll
-            plugins/WinVST/Ultralight2/**/*.vst3
+          name: Ultralight2Flutter-Win64
+          path: plugins/WinVST/Ultralight2/Ultralight2Flutter.dll
