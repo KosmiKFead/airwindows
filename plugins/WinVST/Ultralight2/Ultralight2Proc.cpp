@@ -7,6 +7,31 @@
 #include "Ultralight2.h"
 #endif
 
+//flutter read: pulls a sample out of one of the matrix delay lines, but 'off' samples
+//NEWER than the normal read point. off is fractional, so it blends four neighbouring
+//samples with a cubic curve (Hermite). Cubic instead of a plain straight-line blend keeps the
+//top end from getting dull, which matters because these lines feed back around in a loop.
+//c is the normal read point (the oldest sample), 'last' is the top index of that line.
+//off is never allowed near the length of the line, so it never touches the newest sample.
+static inline float flutRead(const float* buf, int c, int last, float off)
+{
+	int whole = (int)off;
+	float f = off - (float)whole;
+	int i1 = c + whole;
+	int im = (whole > 0) ? i1 - 1 : i1; //nothing older than the oldest sample, so reuse it
+	int i2 = i1 + 1;
+	int i3 = i1 + 2;
+	if (im > last) im -= (last+1);
+	if (i1 > last) i1 -= (last+1);
+	if (i2 > last) i2 -= (last+1);
+	if (i3 > last) i3 -= (last+1);
+	float xm = buf[im]; float x0 = buf[i1]; float x1 = buf[i2]; float x2 = buf[i3];
+	float c1 = 0.5f*(x1-xm);
+	float c2 = xm - (2.5f*x0) + (2.0f*x1) - (0.5f*x2);
+	float c3 = (0.5f*(x2-xm)) + (1.5f*(x0-x1));
+	return (((c3*f)+c2)*f+c1)*f+x0;
+}
+
 void Ultralight2::processReplacing(float **inputs, float **outputs, VstInt32 sampleFrames) 
 {
     float* in1  =  inputs[0];
@@ -60,6 +85,15 @@ void Ultralight2::processReplacing(float **inputs, float **outputs, VstInt32 sam
 	//distance is not a property of the reverb node, it's a property of
 	//the game audio engine, where every source can be localized
 	
+	//flutter: every one of the 16 delay lines in each channel gets its own wandering
+	//read position (a Flutter2 style sweep that re-picks its speed every cycle), so no
+	//line can lock into a fixed comb pattern. FlutDep = how far each line wanders, as a
+	//fraction of that line's own length. FlutSpd = how fast. FlutDep at zero = untouched reverb.
+	float flutDepthTarget = G; if (flutDepthTarget < 0.0f) flutDepthTarget = 0.0f; if (flutDepthTarget > 1.0f) flutDepthTarget = 1.0f;
+	flutDepthTarget = flutDepthTarget*flutDepthTarget*0.04f;
+	float flutSpeed = H; if (flutSpeed < 0.0f) flutSpeed = 0.0f; if (flutSpeed > 1.0f) flutSpeed = 1.0f;
+	flutSpeed = flutSpeed*flutSpeed*flutSpeed*0.004f; //radians per reverb tick (the tick always runs at 48k)
+	
     while (--sampleFrames >= 0)
     {
 		float inputSampleL = *in1;
@@ -74,6 +108,20 @@ void Ultralight2::processReplacing(float **inputs, float **outputs, VstInt32 sam
 			
 			float drySampleL = inputSampleL;
 			float drySampleR = inputSampleR;
+			
+			//begin flutter engine: advance all 32 sweeps, work out this tick's read offsets
+			flDepthNow += (flutDepthTarget-flDepthNow)*0.0005f; //glide, so turning the knob doesn't click
+			if (fabsf(flutDepthTarget-flDepthNow) < 1.0e-7f) flDepthNow = flutDepthTarget;
+			for (int x = 0; x < 32; x++) {
+				flSweep[x] += flMax[x]*flutSpeed;
+				if (flSweep[x] > 6.2831853f) {
+					flSweep[x] -= 6.2831853f;
+					flRand ^= flRand << 13; flRand ^= flRand >> 17; flRand ^= flRand << 5;
+					flMax[x] = 0.24f + (((float)flRand/4294967295.0f)*0.74f);
+				}
+				flOff[x] = flDepthNow * (float)(flutN[x&15]+1) * (1.0f+sinf(flSweep[x]));
+			}
+			//end flutter engine
 			//predelay for plugin: not suitable for game engine,
 			//as it doesn't handle changing delays gracefully.
 			//However, we are going to run a FIXED predelay for
@@ -125,8 +173,8 @@ void Ultralight2::processReplacing(float **inputs, float **outputs, VstInt32 sam
 			if (cB > d4B) cB = 0;
 			if (cC > d4C) cC = 0;
 			if (cD > d4D) cD = 0;
-			hAL = lA[cA]; hBL = lB[cB]; hCL = lC[cC]; hDL = lD[cD];
-			hAR = rA[cA]; hBR = rB[cB]; hCR = rC[cC]; hDR = rD[cD];
+			hAL = flutRead(lA,cA,d4A,flOff[0]); hBL = flutRead(lB,cB,d4B,flOff[1]); hCL = flutRead(lC,cC,d4C,flOff[2]); hDL = flutRead(lD,cD,d4D,flOff[3]);
+			hAR = flutRead(rA,cA,d4A,flOff[16]); hBR = flutRead(rB,cB,d4B,flOff[17]); hCR = flutRead(rC,cC,d4C,flOff[18]); hDR = flutRead(rD,cD,d4D,flOff[19]);
 			hEL = -(hAL + hBL + hCL + hDL);
 			hER = -(hAR + hBR + hCR + hDR);
 			lE[cE] = fma(hAL,2.0f,hEL);
@@ -142,8 +190,8 @@ void Ultralight2::processReplacing(float **inputs, float **outputs, VstInt32 sam
 			if (cF > d4F) cF = 0;
 			if (cG > d4G) cG = 0;
 			if (cH > d4H) cH = 0;
-			hAL = lE[cE]; hBL = lF[cF]; hCL = lG[cG]; hDL = lH[cH];
-			hAR = rE[cE]; hBR = rF[cF]; hCR = rG[cG]; hDR = rH[cH];
+			hAL = flutRead(lE,cE,d4E,flOff[4]); hBL = flutRead(lF,cF,d4F,flOff[5]); hCL = flutRead(lG,cG,d4G,flOff[6]); hDL = flutRead(lH,cH,d4H,flOff[7]);
+			hAR = flutRead(rE,cE,d4E,flOff[20]); hBR = flutRead(rF,cF,d4F,flOff[21]); hCR = flutRead(rG,cG,d4G,flOff[22]); hDR = flutRead(rH,cH,d4H,flOff[23]);
 			hEL = -(hAL + hBL + hCL + hDL);
 			hER = -(hAR + hBR + hCR + hDR);
 			lI[cI] = fma(hAL,2.0f,hEL);
@@ -159,8 +207,8 @@ void Ultralight2::processReplacing(float **inputs, float **outputs, VstInt32 sam
 			if (cJ > d4J) cJ = 0;
 			if (cK > d4K) cK = 0;
 			if (cL > d4L) cL = 0;
-			hAL = lI[cI]; hBL = lJ[cJ]; hCL = lK[cK]; hDL = lL[cL];
-			hAR = rI[cI]; hBR = rJ[cJ]; hCR = rK[cK]; hDR = rL[cL];
+			hAL = flutRead(lI,cI,d4I,flOff[8]); hBL = flutRead(lJ,cJ,d4J,flOff[9]); hCL = flutRead(lK,cK,d4K,flOff[10]); hDL = flutRead(lL,cL,d4L,flOff[11]);
+			hAR = flutRead(rI,cI,d4I,flOff[24]); hBR = flutRead(rJ,cJ,d4J,flOff[25]); hCR = flutRead(rK,cK,d4K,flOff[26]); hDR = flutRead(rL,cL,d4L,flOff[27]);
 			hEL = -(hAL + hBL + hCL + hDL);
 			hER = -(hAR + hBR + hCR + hDR);
 			lM[cM] = fma(hAL,2.0f,hEL);
@@ -176,8 +224,8 @@ void Ultralight2::processReplacing(float **inputs, float **outputs, VstInt32 sam
 			if (cN > d4N) cN = 0;
 			if (cO > d4O) cO = 0;
 			if (cP > d4P) cP = 0;
-			hAL = lM[cM]; hBL = lN[cN]; hCL = lO[cO]; hDL = lP[cP];
-			hAR = rM[cM]; hBR = rN[cN]; hCR = rO[cO]; hDR = rP[cP];
+			hAL = flutRead(lM,cM,d4M,flOff[12]); hBL = flutRead(lN,cN,d4N,flOff[13]); hCL = flutRead(lO,cO,d4O,flOff[14]); hDL = flutRead(lP,cP,d4P,flOff[15]);
+			hAR = flutRead(rM,cM,d4M,flOff[28]); hBR = flutRead(rN,cN,d4N,flOff[29]); hCR = flutRead(rO,cO,d4O,flOff[30]); hDR = flutRead(rP,cP,d4P,flOff[31]);
 			hEL = -(hAL + hBL + hCL + hDL);
 			hER = -(hAR + hBR + hCR + hDR);
 			fAL = fma(hAL,2.0f,hEL);				
@@ -563,6 +611,15 @@ void Ultralight2::processDoubleReplacing(double **inputs, double **outputs, VstI
 	//distance is not a property of the reverb node, it's a property of
 	//the game audio engine, where every source can be localized
 	
+	//flutter: every one of the 16 delay lines in each channel gets its own wandering
+	//read position (a Flutter2 style sweep that re-picks its speed every cycle), so no
+	//line can lock into a fixed comb pattern. FlutDep = how far each line wanders, as a
+	//fraction of that line's own length. FlutSpd = how fast. FlutDep at zero = untouched reverb.
+	float flutDepthTarget = G; if (flutDepthTarget < 0.0f) flutDepthTarget = 0.0f; if (flutDepthTarget > 1.0f) flutDepthTarget = 1.0f;
+	flutDepthTarget = flutDepthTarget*flutDepthTarget*0.04f;
+	float flutSpeed = H; if (flutSpeed < 0.0f) flutSpeed = 0.0f; if (flutSpeed > 1.0f) flutSpeed = 1.0f;
+	flutSpeed = flutSpeed*flutSpeed*flutSpeed*0.004f; //radians per reverb tick (the tick always runs at 48k)
+	
     while (--sampleFrames >= 0)
     {
 		float inputSampleL = *in1;
@@ -577,6 +634,20 @@ void Ultralight2::processDoubleReplacing(double **inputs, double **outputs, VstI
 			
 			float drySampleL = inputSampleL;
 			float drySampleR = inputSampleR;
+			
+			//begin flutter engine: advance all 32 sweeps, work out this tick's read offsets
+			flDepthNow += (flutDepthTarget-flDepthNow)*0.0005f; //glide, so turning the knob doesn't click
+			if (fabsf(flutDepthTarget-flDepthNow) < 1.0e-7f) flDepthNow = flutDepthTarget;
+			for (int x = 0; x < 32; x++) {
+				flSweep[x] += flMax[x]*flutSpeed;
+				if (flSweep[x] > 6.2831853f) {
+					flSweep[x] -= 6.2831853f;
+					flRand ^= flRand << 13; flRand ^= flRand >> 17; flRand ^= flRand << 5;
+					flMax[x] = 0.24f + (((float)flRand/4294967295.0f)*0.74f);
+				}
+				flOff[x] = flDepthNow * (float)(flutN[x&15]+1) * (1.0f+sinf(flSweep[x]));
+			}
+			//end flutter engine
 			//predelay for plugin: not suitable for game engine,
 			//as it doesn't handle changing delays gracefully.
 			//However, we are going to run a FIXED predelay for
@@ -628,8 +699,8 @@ void Ultralight2::processDoubleReplacing(double **inputs, double **outputs, VstI
 			if (cB > d4B) cB = 0;
 			if (cC > d4C) cC = 0;
 			if (cD > d4D) cD = 0;
-			hAL = lA[cA]; hBL = lB[cB]; hCL = lC[cC]; hDL = lD[cD];
-			hAR = rA[cA]; hBR = rB[cB]; hCR = rC[cC]; hDR = rD[cD];
+			hAL = flutRead(lA,cA,d4A,flOff[0]); hBL = flutRead(lB,cB,d4B,flOff[1]); hCL = flutRead(lC,cC,d4C,flOff[2]); hDL = flutRead(lD,cD,d4D,flOff[3]);
+			hAR = flutRead(rA,cA,d4A,flOff[16]); hBR = flutRead(rB,cB,d4B,flOff[17]); hCR = flutRead(rC,cC,d4C,flOff[18]); hDR = flutRead(rD,cD,d4D,flOff[19]);
 			hEL = -(hAL + hBL + hCL + hDL);
 			hER = -(hAR + hBR + hCR + hDR);
 			lE[cE] = fma(hAL,2.0f,hEL);
@@ -645,8 +716,8 @@ void Ultralight2::processDoubleReplacing(double **inputs, double **outputs, VstI
 			if (cF > d4F) cF = 0;
 			if (cG > d4G) cG = 0;
 			if (cH > d4H) cH = 0;
-			hAL = lE[cE]; hBL = lF[cF]; hCL = lG[cG]; hDL = lH[cH];
-			hAR = rE[cE]; hBR = rF[cF]; hCR = rG[cG]; hDR = rH[cH];
+			hAL = flutRead(lE,cE,d4E,flOff[4]); hBL = flutRead(lF,cF,d4F,flOff[5]); hCL = flutRead(lG,cG,d4G,flOff[6]); hDL = flutRead(lH,cH,d4H,flOff[7]);
+			hAR = flutRead(rE,cE,d4E,flOff[20]); hBR = flutRead(rF,cF,d4F,flOff[21]); hCR = flutRead(rG,cG,d4G,flOff[22]); hDR = flutRead(rH,cH,d4H,flOff[23]);
 			hEL = -(hAL + hBL + hCL + hDL);
 			hER = -(hAR + hBR + hCR + hDR);
 			lI[cI] = fma(hAL,2.0f,hEL);
@@ -662,8 +733,8 @@ void Ultralight2::processDoubleReplacing(double **inputs, double **outputs, VstI
 			if (cJ > d4J) cJ = 0;
 			if (cK > d4K) cK = 0;
 			if (cL > d4L) cL = 0;
-			hAL = lI[cI]; hBL = lJ[cJ]; hCL = lK[cK]; hDL = lL[cL];
-			hAR = rI[cI]; hBR = rJ[cJ]; hCR = rK[cK]; hDR = rL[cL];
+			hAL = flutRead(lI,cI,d4I,flOff[8]); hBL = flutRead(lJ,cJ,d4J,flOff[9]); hCL = flutRead(lK,cK,d4K,flOff[10]); hDL = flutRead(lL,cL,d4L,flOff[11]);
+			hAR = flutRead(rI,cI,d4I,flOff[24]); hBR = flutRead(rJ,cJ,d4J,flOff[25]); hCR = flutRead(rK,cK,d4K,flOff[26]); hDR = flutRead(rL,cL,d4L,flOff[27]);
 			hEL = -(hAL + hBL + hCL + hDL);
 			hER = -(hAR + hBR + hCR + hDR);
 			lM[cM] = fma(hAL,2.0f,hEL);
@@ -679,8 +750,8 @@ void Ultralight2::processDoubleReplacing(double **inputs, double **outputs, VstI
 			if (cN > d4N) cN = 0;
 			if (cO > d4O) cO = 0;
 			if (cP > d4P) cP = 0;
-			hAL = lM[cM]; hBL = lN[cN]; hCL = lO[cO]; hDL = lP[cP];
-			hAR = rM[cM]; hBR = rN[cN]; hCR = rO[cO]; hDR = rP[cP];
+			hAL = flutRead(lM,cM,d4M,flOff[12]); hBL = flutRead(lN,cN,d4N,flOff[13]); hCL = flutRead(lO,cO,d4O,flOff[14]); hDL = flutRead(lP,cP,d4P,flOff[15]);
+			hAR = flutRead(rM,cM,d4M,flOff[28]); hBR = flutRead(rN,cN,d4N,flOff[29]); hCR = flutRead(rO,cO,d4O,flOff[30]); hDR = flutRead(rP,cP,d4P,flOff[31]);
 			hEL = -(hAL + hBL + hCL + hDL);
 			hER = -(hAR + hBR + hCR + hDR);
 			fAL = fma(hAL,2.0f,hEL);				
