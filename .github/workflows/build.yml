@@ -13,12 +13,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up MSVC Compiler
-        uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Direct C++ Compile to VST DLL
+      - name: Compile Plugin Directly
+        shell: cmd
         run: |
           cd plugins/WinVST/Ultralight2
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSPATH=%%i"
+          call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat"
           cl /O2 /LD Ultralight2.cpp Ultralight2Proc.cpp /link /DEF:vstplug.def /OUT:Ultralight2Flutter.dll
 
       - name: Upload Plugin Artifact
