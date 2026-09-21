@@ -28,8 +28,8 @@ jobs:
           Import-Module (Join-Path $installPath "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
           Enter-VsDevShell -VsInstallPath $installPath -arch amd64
           
-          # Compile source files directly using the downloaded SDK headers
-          cl /O2 /LD Ultralight2.cpp Ultralight2Proc.cpp /I "../../../vstsdk/public.sdk/source/vst2.x" /I "../../../vstsdk/pluginterfaces/vst2.x" /link /DEF:vstplug.def /OUT:Ultralight2Flutter.dll
+          # Compile source files with corrected SDK root include path
+          cl /O2 /LD Ultralight2.cpp Ultralight2Proc.cpp /I "../../../vstsdk" /I "../../../vstsdk/public.sdk/source/vst2.x" /link /DEF:vstplug.def /OUT:Ultralight2Flutter.dll
 
       - name: Upload Plugin Artifact
         uses: actions/upload-artifact@v4
