@@ -27,11 +27,15 @@ jobs:
           $pluginDir = "$root/plugins/WinVST/Ultralight2"
           Set-Location $pluginDir
           
-          # Resolve absolute paths for SDK components
-          $ae  = "$root/vstsdk/public.sdk/source/vst2.x/audioeffect.cpp"
-          $aex = "$root/vstsdk/public.sdk/source/vst2.x/audioeffectx.cpp"
-          $vpm = "$root/vstsdk/public.sdk/source/vst2.x/vstplugmain.cpp"
+          # Resolve SDK paths dynamically where needed
           $sdk = "$root/vstsdk"
+          $ae  = "$sdk/public.sdk/source/vst2.x/audioeffect.cpp"
+          $aex = "$sdk/public.sdk/source/vst2.x/audioeffectx.cpp"
+          
+          # Dynamically locate vstplugmain.cpp using PowerShell radar
+          $vpmSearch = Get-ChildItem -Path $sdk -Recurse -Filter "vstplugmain.cpp" | Select-Object -First 1
+          if (-not $vpmSearch) { throw "CRITICAL: Could not find vstplugmain.cpp anywhere in the SDK!" }
+          $vpm = $vpmSearch.FullName
           
           Write-Host "--- 2. VERIFYING DEPENDENCIES ---"
           $requiredFiles = @("$pluginDir/Ultralight2.cpp", "$pluginDir/Ultralight2Proc.cpp", "$pluginDir/vstplug.def", $ae, $aex, $vpm)
