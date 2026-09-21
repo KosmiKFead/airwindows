@@ -17,10 +17,21 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/R-Tur/VST_SDK_2.4.git vstsdk
 
-      - name: Compile Plugin with SDK and Boilerplate
+      - name: Compile with Dynamic SDK Discovery
         shell: pwsh
         run: |
           Set-Location "plugins/WinVST/Ultralight2"
+          
+          # Dynamically locate all required SDK source files anywhere in the repo
+          $ae  = (Get-ChildItem -Path "../.." -Recurse -Filter "audioeffect.cpp" | Select-Object -First 1).FullName
+          $aex = (Get-ChildItem -Path "../.." -Recurse -Filter "audioeffectx.cpp" | Select-Object -First 1).FullName
+          $vpm = (Get-ChildItem -Path "../.." -Recurse -Filter "vstplugmain.cpp" | Select-Object -First 1).FullName
+          $sdk = (Get-ChildItem -Path "../.." -Recurse -Filter "aeffect.h" | Select-Object -First 1).Directory.Parent.Parent.FullName
+          
+          Write-Host "Found audioeffect.cpp at: $ae"
+          Write-Host "Found audioeffectx.cpp at: $aex"
+          Write-Host "Found vstplugmain.cpp at: $vpm"
+          Write-Host "Found SDK root at: $sdk"
           
           # Initialize MSVC compiler environment
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -28,13 +39,8 @@ jobs:
           Import-Module (Join-Path $installPath "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
           Enter-VsDevShell -VsInstallPath $installPath -arch amd64
           
-          # Compile custom source files + required VST2 SDK implementation boilerplate
-          cl /O2 /LD Ultralight2.cpp Ultralight2Proc.cpp `
-             ../../../vstsdk/public.sdk/source/vst2.x/audioeffect.cpp `
-             ../../../vstsdk/public.sdk/source/vst2.x/audioeffectx.cpp `
-             ../../../vstsdk/public.sdk/source/vst2.x/vstplugmain.cpp `
-             /I "../../../vstsdk" /I "../../../vstsdk/public.sdk/source/vst2.x" `
-             /link /DEF:vstplug.def /OUT:Ultralight2Flutter.dll
+          # Compile custom code + discovered SDK boilerplate using absolute paths
+          cl /O2 /LD Ultralight2.cpp Ultralight2Proc.cpp "$ae" "$aex" "$vpm" /I "$sdk" /I "$sdk/public.sdk/source/vst2.x" /link /DEF:vstplug.def /OUT:Ultralight2Flutter.dll
 
       - name: Upload Plugin Artifact
         uses: actions/upload-artifact@v4
