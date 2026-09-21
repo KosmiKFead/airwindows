@@ -13,12 +13,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Compile Plugin Directly
-        shell: cmd
+      - name: Compile with MSVC Developer Shell
+        shell: pwsh
         run: |
-          cd plugins/WinVST/Ultralight2
-          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSPATH=%%i"
-          call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat"
+          Set-Location "plugins/WinVST/Ultralight2"
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $installPath) {
+              throw "Visual Studio installation path not found."
+          }
+          Write-Host "Found VS at: $installPath"
+          
+          Import-Module (Join-Path $installPath "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
+          Enter-VsDevShell -VsInstallPath $installPath -arch amd64
+          
+          Write-Host "Compiling Ultralight2Flutter..."
           cl /O2 /LD Ultralight2.cpp Ultralight2Proc.cpp /link /DEF:vstplug.def /OUT:Ultralight2Flutter.dll
 
       - name: Upload Plugin Artifact
