@@ -17,30 +17,53 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/R-Tur/VST_SDK_2.4.git vstsdk
 
-      - name: Compile with Dynamic SDK Discovery
+      - name: Bulletproof Compile & Verify
         shell: pwsh
         run: |
-          Set-Location "plugins/WinVST/Ultralight2"
+          $ErrorActionPreference = 'Stop'
+          $root =$env:GITHUB_WORKSPACE
           
-          # Dynamically locate all required SDK source files anywhere in the repo
-          $ae  = (Get-ChildItem -Path "../.." -Recurse -Filter "audioeffect.cpp" | Select-Object -First 1).FullName
-          $aex = (Get-ChildItem -Path "../.." -Recurse -Filter "audioeffectx.cpp" | Select-Object -First 1).FullName
-          $vpm = (Get-ChildItem -Path "../.." -Recurse -Filter "vstplugmain.cpp" | Select-Object -First 1).FullName
-          $sdk = (Get-ChildItem -Path "../.." -Recurse -Filter "aeffect.h" | Select-Object -First 1).Directory.Parent.Parent.FullName
+          Write-Host "--- 1. ENVIRONMENT SETUP ---"
+          $pluginDir = "$root/plugins/WinVST/Ultralight2"
+          Set-Location $pluginDir
           
-          Write-Host "Found audioeffect.cpp at: $ae"
-          Write-Host "Found audioeffectx.cpp at: $aex"
-          Write-Host "Found vstplugmain.cpp at: $vpm"
-          Write-Host "Found SDK root at: $sdk"
+          # Resolve absolute paths for SDK components
+          $ae  = "$root/vstsdk/public.sdk/source/vst2.x/audioeffect.cpp"
+          $aex = "$root/vstsdk/public.sdk/source/vst2.x/audioeffectx.cpp"
+          $vpm = "$root/vstsdk/public.sdk/source/vst2.x/vstplugmain.cpp"
+          $sdk = "$root/vstsdk"
           
-          # Initialize MSVC compiler environment
+          Write-Host "--- 2. VERIFYING DEPENDENCIES ---"
+          $requiredFiles = @("$pluginDir/Ultralight2.cpp", "$pluginDir/Ultralight2Proc.cpp", "$pluginDir/vstplug.def", $ae, $aex,$vpm)
+          foreach ($file in$requiredFiles) {
+              if (-not (Test-Path $file)) {
+                  throw "CRITICAL: Required build file missing -> $file"
+              }
+              Write-Host "Found: $(Split-Path$file -Leaf)"
+          }
+          
+          Write-Host "--- 3. INITIALIZING MSVC COMPILER ---"
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $installPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $installPath = &$vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $installPath) { throw "Could not locate Visual Studio installation path." }
+          
           Import-Module (Join-Path $installPath "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
           Enter-VsDevShell -VsInstallPath $installPath -arch amd64
           
-          # Compile custom code + discovered SDK boilerplate using absolute paths
-          cl /O2 /LD Ultralight2.cpp Ultralight2Proc.cpp "$ae" "$aex" "$vpm" /I "$sdk" /I "$sdk/public.sdk/source/vst2.x" /link /DEF:vstplug.def /OUT:Ultralight2Flutter.dll
+          Write-Host "--- 4. EXECUTING COMPILER & LINKER ---"
+          cl /O2 /LD Ultralight2.cpp Ultralight2Proc.cpp "$ae" "$aex" "$vpm" `
+             /I "$sdk" /I "$sdk/public.sdk/source/vst2.x" /I "$sdk/pluginterfaces/vst2.x" `
+             /link /DEF:vstplug.def /OUT:Ultralight2Flutter.dll
+             
+          if ($LASTEXITCODE -ne 0) {
+              throw "Compilation or linking failed with exit code $LASTEXITCODE"
+          }
+          
+          Write-Host "--- 5. VERIFYING OUTPUT ARTIFACT ---"
+          if (-not (Test-Path "Ultralight2Flutter.dll")) {
+              throw "Build completed but Ultralight2Flutter.dll was not found!"
+          }
+          Write-Host "SUCCESS: Ultralight2Flutter.dll successfully built!"
 
       - name: Upload Plugin Artifact
         uses: actions/upload-artifact@v4
