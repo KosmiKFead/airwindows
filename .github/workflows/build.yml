@@ -17,7 +17,7 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/R-Tur/VST_SDK_2.4.git vstsdk
 
-      - name: Compile Plugin with SDK
+      - name: Compile Plugin with SDK and Boilerplate
         shell: pwsh
         run: |
           Set-Location "plugins/WinVST/Ultralight2"
@@ -28,8 +28,13 @@ jobs:
           Import-Module (Join-Path $installPath "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
           Enter-VsDevShell -VsInstallPath $installPath -arch amd64
           
-          # Compile source files with corrected SDK root include path
-          cl /O2 /LD Ultralight2.cpp Ultralight2Proc.cpp /I "../../../vstsdk" /I "../../../vstsdk/public.sdk/source/vst2.x" /link /DEF:vstplug.def /OUT:Ultralight2Flutter.dll
+          # Compile custom source files + required VST2 SDK implementation boilerplate
+          cl /O2 /LD Ultralight2.cpp Ultralight2Proc.cpp `
+             ../../../vstsdk/public.sdk/source/vst2.x/audioeffect.cpp `
+             ../../../vstsdk/public.sdk/source/vst2.x/audioeffectx.cpp `
+             ../../../vstsdk/public.sdk/source/vst2.x/vstplugmain.cpp `
+             /I "../../../vstsdk" /I "../../../vstsdk/public.sdk/source/vst2.x" `
+             /link /DEF:vstplug.def /OUT:Ultralight2Flutter.dll
 
       - name: Upload Plugin Artifact
         uses: actions/upload-artifact@v4
