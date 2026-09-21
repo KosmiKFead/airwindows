@@ -13,29 +13,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Compile Plugin Directly
+      - name: Diagnostic Build & Sleuth
         shell: pwsh
         run: |
           Set-Location "plugins/WinVST/Ultralight2"
           
-          # Copy VST SDK headers from the repository's Linux include folder
-          if (Test-Path "../../../plugins/LinuxVST/include/vstsdk") {
-              Copy-Item "../../../plugins/LinuxVST/include/vstsdk/*" . -Recurse -Force
-          }
+          Write-Host "--- 1. CHECKING FOLDER CONTENTS ---"
+          Get-ChildItem | Select-Object Name
           
-          # Locate and initialize MSVC compiler environment
+          Write-Host "--- 2. LOCATING VST HEADERS IN REPO ---"
+          Get-ChildItem -Path "../.." -Recurse -Filter "audioeffectx.h" | Select-Object FullName
+          
+          Write-Host "--- 3. INITIALIZING COMPILER ---"
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $installPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if (-not $installPath) { throw "VS installation path not found." }
-          
           Import-Module (Join-Path $installPath "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
           Enter-VsDevShell -VsInstallPath $installPath -arch amd64
           
-          # Compile source files into plugin DLL
+          Write-Host "--- 4. RUNNING COMPILER ---"
           cl /O2 /LD Ultralight2.cpp Ultralight2Proc.cpp /link /DEF:vstplug.def /OUT:Ultralight2Flutter.dll
-
-      - name: Upload Plugin Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Ultralight2Flutter-Win64
-          path: plugins/WinVST/Ultralight2/Ultralight2Flutter.dll
